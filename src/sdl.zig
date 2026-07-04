@@ -210,6 +210,49 @@ pub fn putAudioStreamData(stream: *AudioStream, T: type, buf: []T) Error!void {
 }
 extern "SDL3" fn SDL_PutAudioStreamData(*AudioStream, buf: *anyopaque, len: c_int) bool;
 
+/// Tell the stream that you're done sending data, and anything being buffered
+/// should be converted/resampled and made available immediately.
+///
+/// It is legal to add more data to a stream after flushing, but there may be
+/// audio gaps in the output. Generally this is intended to signal the end of
+/// input, so the complete output becomes available.
+///
+/// \param stream the audio stream to flush.
+/// \returns true on success or false on failure; call SDL_GetError() for more
+///          information.
+///
+/// \threadsafety It is safe to call this function from any thread.
+///
+/// \since This function is available since SDL 3.2.0.
+///
+/// \sa SDL_PutAudioStreamData
+pub fn flushAudioStream(stream: *AudioStream) Error!void {
+    if (!SDL_FlushAudioStream(stream)) return Error.SdlError;
+}
+extern "SDL3" fn SDL_FlushAudioStream(*AudioStream) bool;
+
+/// Clear any pending data in the stream.
+///
+/// This drops any queued data, so there will be nothing to read from the
+/// stream until more is added.
+///
+/// \param stream the audio stream to clear.
+/// \returns true on success or false on failure; call SDL_GetError() for more
+///          information.
+///
+/// \threadsafety It is safe to call this function from any thread.
+///
+/// \since This function is available since SDL 3.2.0.
+///
+/// \sa SDL_GetAudioStreamAvailable
+/// \sa SDL_GetAudioStreamData
+/// \sa SDL_GetAudioStreamQueued
+/// \sa SDL_PutAudioStreamData
+pub fn clearAudioStream(stream: *AudioStream) Error!void {
+    if (!SDL_ClearAudioStream(stream)) return Error.SdlError;
+}
+extern "SDL3" fn SDL_ClearAudioStream(*AudioStream) bool;
+
 /// A callback that fires when data passes through an SDL_AudioStream.
 ///
 /// Apps can (optionally) register a callback with an audio stream that is

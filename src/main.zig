@@ -40,7 +40,7 @@ pub fn main(init: std.process.Init) !u8 {
     const file = try std.Io.Dir.cwd().openFile(init.io, filename, .{});
     var file_reader = file.reader(init.io, &file_buf);
 
-    var decoder = flac.Decoder.init(init.gpa, &file_reader.interface, .{}) catch |err| {
+    var decoder = flac.Decoder.init(init.gpa, &file_reader.interface, .{ .seek_impl = .file }) catch |err| {
         log.err("Failed to initialize flac decoder: {t}", .{err});
         return 1;
     };
@@ -89,15 +89,27 @@ pub fn main(init: std.process.Init) !u8 {
     try stdout.flush();
     const min_samples = 10240;
     var should_quit = false;
+    var flushed = false;
     while (!should_quit) {
-        if (sdl.getAudioStreamQueued(stream) catch break < min_samples) {
+        const queued = sdl.getAudioStreamQueued(stream) catch {
+            log.err("Failed to get number of queued bytes: {s}\n", .{sdl.getError()});
+            return error.SdlGetAudioStreamQueuedFailed;
+        };
+        if (queued < min_samples) {
             var buf: [min_samples]f32 = undefined;
             const samples = decoder.read(f32, &buf) catch |err| {
                 log.err("Failed to read audio data: {t}", .{err});
                 return err;
             };
             if (samples.len == 0) {
-                should_quit = true;
+                if (queued == 0) {
+                    should_quit = true;
+                }
+                if (!flushed) {
+                    sdl.flushAudioStream(stream) catch
+                        log.err("Failed to flush audio stream: {s}\n", .{sdl.getError()});
+                    flushed = true;
+                }
             }
 
             sdl.putAudioStreamData(stream, f32, &buf) catch
@@ -152,6 +164,24 @@ pub fn main(init: std.process.Init) !u8 {
                     sdl.resumeAudioStreamDevice(stream) catch
                         log.err("Failed to resume audio stream device: {s}\n", .{sdl.getError()});
                 }
+            }
+            if (key == .right) {
+                const five_secs = decoder.sample_rate * 5;
+                decoder.seekTo(decoder.frame_offset +| five_secs) catch |err| {
+                    log.err("Failed to seek: {t}", .{err});
+                    if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace);
+                };
+                played.nanoseconds = @min(duration.nanoseconds, played.nanoseconds + 5 * std.time.ns_per_s);
+                sdl.clearAudioStream(stream) catch
+                    log.err("Failed to clear stream: {s}", .{sdl.getError()});
+            }
+            if (key == .left) {
+                const five_secs = decoder.sample_rate * 5;
+                decoder.seekTo(decoder.frame_offset -| five_secs) catch |err|
+                    log.err("Failed to seek: {t}", .{err});
+                played.nanoseconds = @max(0, played.nanoseconds - 5 * std.time.ns_per_s);
+                sdl.clearAudioStream(stream) catch
+                    log.err("Failed to clear stream: {s}", .{sdl.getError()});
             }
         }
     }
