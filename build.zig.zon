@@ -1,0 +1,19 @@
+.{
+    .name = .muzika,
+    .version = "0.0.0",
+    .fingerprint = 0xcba2816d2005430f, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .flac = .{
+            .url = "git+https://codeberg.org/audiophile/flac.git#7b73a7f548371ef5f471b26240ede1b35260946a",
+            .hash = "flac-1.0.0-7jA7CZc0AgDu9ddW79TkGC1928nN5yfib5aviFqIWQfd",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        //"LICENSE",
+        //"README.md",
+    },
+}
