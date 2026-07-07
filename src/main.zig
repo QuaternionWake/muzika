@@ -1,12 +1,14 @@
 const std = @import("std");
 const log = std.log;
 const Io = std.Io;
+const Utf8View = std.unicode.Utf8View;
 
 const sdl = @import("sdl");
 const flac = @import("flac");
 
 const raw_mode = @import("raw_mode.zig");
 const input = @import("input.zig");
+const Terminal = @import("Terminal.zig");
 
 pub fn main(init: std.process.Init) !u8 {
     var stdout_buf: [1024]u8 = undefined;
@@ -15,10 +17,8 @@ pub fn main(init: std.process.Init) !u8 {
     const stdout = &stdout_writer.interface;
     defer stdout.flush() catch @panic("failed to flush stdout");
 
-    var stdin_buf: [1024]u8 = undefined;
-    const stdin_file = std.Io.File.stdin();
-    var stdin_reader = stdin_file.reader(init.io, &stdin_buf);
-    const stdin = &stdin_reader.interface;
+    var terminal: Terminal = try .init(init.io, init.gpa);
+    defer terminal.deinit();
 
     var args_iter = init.minimal.args.iterate();
     const prog_name = args_iter.next().?;
@@ -85,8 +85,6 @@ pub fn main(init: std.process.Init) !u8 {
     const clock: std.Io.Clock = .awake;
     var prev_timestamp = clock.now(init.io);
 
-    try stdout.print("{s}\n", .{title orelse filename});
-    try stdout.flush();
     const min_samples = 10240;
     var should_quit = false;
     var flushed = false;
@@ -124,32 +122,13 @@ pub fn main(init: std.process.Init) !u8 {
             prev_timestamp = timestamp;
         }
 
-        const played_seconds: u32 = @intCast(played.toSeconds());
-        try stdout.print(
-            "\r{d:02}:{d:02} / {d:02}:{d:02}",
-            .{ played_seconds / 60, played_seconds % 60, duration_seconds / 60, duration_seconds % 60 },
-        );
-        const progress_width = 50;
-        const ratio_played = @min(1, @as(f32, @floatFromInt(played.nanoseconds)) / @as(f32, @floatFromInt(duration.nanoseconds)));
-        const num_filled: usize = (@round(ratio_played * progress_width));
-        try stdout.writeAll("   ");
-        try stdout.writeByte('[');
-        try stdout.splatByteAll('#', num_filled);
-        try stdout.splatByteAll(' ', progress_width - num_filled);
-        try stdout.writeByte(']');
-        try stdout.flush();
+        const view = Utf8View.init(title orelse filename) catch Utf8View.initComptime("???");
+        terminal.tui.drawTitle(view);
+        terminal.tui.drawBottomBar(played, duration);
 
-        if (stdin.bufferedLen() == 0) {
-            if (pollFd(stdin_file.handle)) {
-                stdin.fill(1) catch |err| switch (err) {
-                    error.ReadFailed => log.err("Failed to read from stdin", .{}),
-                    error.EndOfStream => {},
-                };
-            }
-        }
-        if (stdin.seek < stdin.end) {
-            const key, const consumed = input.get(stdin.buffer[stdin.seek..stdin.end]);
-            stdin.toss(consumed);
+        try terminal.draw();
+
+        while (terminal.getInput()) |key| {
             if (key == .q) {
                 should_quit = true;
             }
@@ -188,16 +167,6 @@ pub fn main(init: std.process.Init) !u8 {
     try stdout.writeByte('\n');
 
     return 0;
-}
-
-fn pollFd(fd: std.posix.fd_t) bool {
-    var pollfd: std.posix.pollfd = .{
-        .fd = fd,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    };
-    _ = std.posix.poll(@ptrCast(&pollfd), 0) catch return false;
-    return pollfd.revents & std.posix.POLL.IN != 0;
 }
 
 fn sdlInit() !void {

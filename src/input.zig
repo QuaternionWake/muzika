@@ -73,7 +73,7 @@ fn keyboardKeyFromToken(token: Token) error{UnknownKey}!KeyboardKey {
     return error.UnknownKey;
 }
 
-const KeyboardKey = enum(u8) {
+pub const KeyboardKey = enum(u8) {
     // zig fmt: off
     q='q', w='w', e='e', r='r', t='t', y='y', u='u', i='i', o='o', p='p',
     a='a', s='s', d='d', f='f', g='g', h='h', j='j', k='k', l='l',
