@@ -206,12 +206,13 @@ const Tui = struct {
         };
 
         // has space for at least 5 notches on the progress bar + ends + spaces
-        if (pixels.len > str_played.len + str_duration.len + 7 + 2) {
+        if (pixels.len > str_played.len + str_duration.len + 5 + 2 + 2) {
             // [played] [progress bar] [duration]
             // 0:33 [####          ] 4:52
             const progress_width = pixels.len - str_played.len - str_duration.len - 2;
+            const inner_width = progress_width - 2;
             const ratio_played = @min(1, @as(f32, @floatFromInt(played.nanoseconds)) / @as(f32, @floatFromInt(duration.nanoseconds)));
-            const num_filled: usize = @round(ratio_played * @as(f32, @floatFromInt(progress_width)));
+            const num_filled: usize = @round(ratio_played * @as(f32, @floatFromInt(inner_width)));
 
             // played
             writeTuiPixelString(pixels, str_played);
