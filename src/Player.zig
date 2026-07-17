@@ -179,8 +179,11 @@ pub fn trackTitle(self: Player) []const u8 {
 }
 
 pub fn nextTrack(self: *Player) !void {
-    if (self.current_track < self.tracks.len) {
+    if (self.current_track + 1 < self.tracks.len) {
         self.current_track += 1;
+    } else {
+        try self.seekSample(std.math.maxInt(u64));
+        return;
     }
     try self.playCurrentTrack();
 }
