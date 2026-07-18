@@ -74,6 +74,8 @@ pub fn main(init: std.process.Init) !u8 {
         };
         std.Io.sleep(init.io, .fromMilliseconds(10), .awake) catch unreachable;
 
+        terminal.tui.drawCoverArt();
+        terminal.tui.drawTrackList(player.tracks, player.current_track);
         const title_view = Utf8View.init(player.trackString(.title)) catch Utf8View.initComptime("???");
         const artist_view = Utf8View.init(player.trackString(.artist)) catch Utf8View.initComptime("???");
         const album_view = Utf8View.init(player.trackString(.album)) catch Utf8View.initComptime("???");

@@ -5,10 +5,11 @@ const log = std.log;
 const time = std.time;
 
 const input = @import("input.zig");
+const Track = @import("Player.zig").Track;
 
 const Terminal = @This();
 
-const tui_height = 6;
+const tui_height = 14;
 const y_padding = 1;
 const x_padding = 2;
 
@@ -137,6 +138,44 @@ const Tui = struct {
         return self.pixels[offset..].ptr;
     }
 
+    pub fn drawTrackList(self: *Tui, tracks: []Track, current_track: usize) void {
+        const x = x_padding + @as(u16, if (self.width < 50) 2 else cover_art_width + 5);
+
+        const start = blk: {
+            if (tracks.len <= cover_art_height) break :blk 0;
+            break :blk @min(current_track -| cover_art_height / 2, tracks.len - cover_art_height);
+        };
+        const end =
+            if (tracks.len <= cover_art_height) tracks.len else start + cover_art_height;
+
+        for (tracks[start..end], 0..) |track, y| {
+            const title = std.mem.span(track.get(.title));
+            const view = std.unicode.Utf8View.init(title) catch std.unicode.Utf8View.initComptime("???");
+
+            _ = self.drawTextLine(view, .{ .x = x, .y = @intCast(y + y_padding) }, self.width - x - x_padding);
+            if (y + start == current_track) {
+                const pixel = self.getPixelRef(x - 2, @intCast(y + y_padding)) orelse continue;
+                pixel[0].char = '>';
+            }
+        }
+    }
+
+    const cover_art_width = 16;
+    const cover_art_height = 7;
+    pub fn drawCoverArt(self: *Tui) void {
+        if (self.width < 50) return;
+
+        for (0..cover_art_height) |y| {
+            const pixels = blk: {
+                const pixel = self.getPixelRef(x_padding, @intCast(y + y_padding)) orelse return;
+                break :blk pixel[0..cover_art_width];
+            };
+            for (pixels) |*p| {
+                p.char = '.';
+            }
+        }
+    }
+
     pub fn drawTextLine(self: *Tui, text: std.unicode.Utf8View, pos: Vec2, max_width: u16) u16 {
         const pixels = blk: {
             const pixel = self.getPixelRef(pos.x, pos.y) orelse return 0;
@@ -158,24 +197,24 @@ const Tui = struct {
     }
 
     pub fn drawTitle(self: *Tui, title: std.unicode.Utf8View) void {
-        _ = self.drawTextLine(title, .{ .x = x_padding, .y = y_padding }, self.width - 2 * x_padding);
+        _ = self.drawTextLine(title, .{ .x = x_padding, .y = y_padding + 8 }, self.width - 2 * x_padding);
     }
 
     pub fn drawArtistAlbum(self: *Tui, artist: std.unicode.Utf8View, album: std.unicode.Utf8View) void {
         var start: u16 = x_padding;
         start += self.drawTextLine(
             artist,
-            .{ .x = start, .y = y_padding + 1 },
+            .{ .x = start, .y = y_padding + 9 },
             self.width - 2 * x_padding,
         );
         start += self.drawTextLine(
             .initComptime(" | "),
-            .{ .x = start, .y = y_padding + 1 },
+            .{ .x = start, .y = y_padding + 9 },
             self.width - 2 * x_padding,
         );
         _ = self.drawTextLine(
             album,
-            .{ .x = start, .y = y_padding + 1 },
+            .{ .x = start, .y = y_padding + 9 },
             self.width - 2 * x_padding,
         );
     }

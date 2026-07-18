@@ -10,7 +10,7 @@ const Player = @This();
 
 const clock: Io.Clock = .awake;
 
-const Track = struct {
+pub const Track = struct {
     strings: []u8,
     title: usize,
     artist: usize,
@@ -18,7 +18,7 @@ const Track = struct {
 
     const String = enum { path, title, artist, album };
 
-    fn get(self: Track, string: String) [*:0]const u8 {
+    pub fn get(self: Track, string: String) [*:0]const u8 {
         return switch (string) {
             .path => @ptrCast(self.strings[0..]),
             .title => @ptrCast(self.strings[self.title..]),
