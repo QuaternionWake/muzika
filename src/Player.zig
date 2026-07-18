@@ -11,38 +11,76 @@ const Player = @This();
 const clock: Io.Clock = .awake;
 
 const Track = struct {
-    title: []u8,
-    path: []u8,
+    strings: []u8,
+    title: usize,
+    artist: usize,
+    album: usize,
 
-    /// title is duped by allocator
-    /// path is not, must be allocated by it at call site
-    fn init(ally: Allocator, path: []u8, decoder: flac.Decoder) !Track {
-        const title = blk: for (decoder.metadata) |m| {
+    const String = enum { path, title, artist, album };
+
+    fn get(self: Track, string: String) [*:0]const u8 {
+        return switch (string) {
+            .path => @ptrCast(self.strings[0..]),
+            .title => @ptrCast(self.strings[self.title..]),
+            .artist => @ptrCast(self.strings[self.artist..]),
+            .album => @ptrCast(self.strings[self.album..]),
+        };
+    }
+
+    fn init(ally: Allocator, path: []const []const u8, decoder: flac.Decoder) !Track {
+        var title = blk: {
+            if (path.len == 0) break :blk "";
+            const start = mem.findScalarLast(u8, path[path.len - 1], Io.Dir.path.sep) orelse 0;
+            break :blk path[path.len - 1][start + 1 ..];
+        };
+        var artist: []const u8 = "unknown artist";
+        var album: []const u8 = "unknown album";
+        for (decoder.metadata) |m| {
             switch (m) {
                 .vorbis_comment => |vc| {
                     var iter = vc.iterator();
                     while (iter.next()) |entry| {
                         if (mem.eql(u8, entry.key, "TITLE")) {
-                            break :blk entry.value;
+                            title = entry.value;
+                        } else if (mem.eql(u8, entry.key, "ARTIST")) {
+                            artist = entry.value;
+                        } else if (mem.eql(u8, entry.key, "ALBUM")) {
+                            album = entry.value;
                         }
                     }
                 },
                 else => {},
             }
-        } else {
-            const start = mem.findScalarLast(u8, path, Io.Dir.path.sep) orelse 0;
-            break :blk path[start..];
-        };
+        }
 
+        // path.len - 1 separators, plus a null terminator for each field
+        var len = path.len -| 1 + 4;
+        // all the paths
+        for (path) |p| len += p.len;
+        // and all the fields
+        len += title.len + artist.len + album.len;
+
+        const buffer = try ally.alloc(u8, len);
+        var buf_ally: std.heap.FixedBufferAllocator = .init(buffer);
+
+        const path_len = (mem.joinZ(buf_ally.allocator(), Io.Dir.path.sep_str, path) catch unreachable).len;
+        _ = mem.joinZ(buf_ally.allocator(), &.{0}, &.{ title, artist, album }) catch unreachable;
+
+        std.debug.assert(buf_ally.end_index == buffer.len);
+
+        const title_start = path_len + 1;
+        const artist_start = title_start + title.len + 1;
+        const album_start = artist_start + artist.len + 1;
         return .{
-            .title = try ally.dupe(u8, title),
-            .path = path,
+            .strings = buffer,
+            .title = title_start,
+            .artist = artist_start,
+            .album = album_start,
         };
     }
 
     fn deinit(self: Track, ally: Allocator) void {
-        ally.free(self.title);
-        ally.free(self.path);
+        ally.free(self.strings);
     }
 };
 
@@ -103,7 +141,7 @@ pub fn playCurrentTrack(self: *Player) !void {
     _ = self.decoder_arena.reset(.retain_capacity);
 
     if (self.file) |f| f.close(self.io);
-    self.file = try Io.Dir.cwd().openFile(self.io, track.path, .{});
+    self.file = try Io.Dir.cwd().openFile(self.io, mem.span(track.get(.path)), .{});
     self.file_reader.* = self.file.?.reader(self.io, self.file_buffer);
     self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
 
@@ -170,9 +208,9 @@ pub fn togglePause(self: *Player) !void {
     }
 }
 
-pub fn trackTitle(self: Player) []const u8 {
+pub fn trackString(self: Player, string: Track.String) []const u8 {
     if (self.current_track < self.tracks.len) {
-        return self.tracks[self.current_track].title;
+        return mem.span(self.tracks[self.current_track].get(string));
     } else {
         return "n/a";
     }
@@ -260,7 +298,7 @@ fn loadFile(self: *Player, path: []const u8) !void {
     self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
 
     self.tracks = try self.ally.alloc(Track, 1);
-    self.tracks[0] = try .init(self.ally, try self.ally.dupe(u8, path), self.decoder);
+    self.tracks[0] = try .init(self.ally, &.{path}, self.decoder);
 }
 
 fn loadDir(self: *Player, path: []const u8) !void {
@@ -285,7 +323,7 @@ fn loadDir(self: *Player, path: []const u8) !void {
 
         try track_list.append(self.ally, try .init(
             self.ally,
-            try mem.join(self.ally, Io.Dir.path.sep_str, &.{ path, entry.name }),
+            &.{ path, entry.name },
             decoder,
         ));
     }
@@ -296,7 +334,7 @@ fn loadDir(self: *Player, path: []const u8) !void {
     _ = self.decoder_arena.reset(.retain_capacity);
 
     if (self.file) |f| f.close(self.io);
-    self.file = try Io.Dir.cwd().openFile(self.io, self.tracks[0].path, .{});
+    self.file = try Io.Dir.cwd().openFile(self.io, mem.span(self.tracks[0].get(.path)), .{});
     self.file_reader.* = self.file.?.reader(self.io, self.file_buffer);
     self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
 }

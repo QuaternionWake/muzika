@@ -8,7 +8,7 @@ const input = @import("input.zig");
 
 const Terminal = @This();
 
-const tui_height = 4;
+const tui_height = 6;
 const y_padding = 1;
 const x_padding = 2;
 
@@ -137,25 +137,47 @@ const Tui = struct {
         return self.pixels[offset..].ptr;
     }
 
-    pub fn drawTextLine(self: *Tui, text: std.unicode.Utf8View, pos: Vec2, max_width: u16) void {
+    pub fn drawTextLine(self: *Tui, text: std.unicode.Utf8View, pos: Vec2, max_width: u16) u16 {
         const pixels = blk: {
-            const pixel = self.getPixelRef(pos.x, pos.y) orelse return;
+            const pixel = self.getPixelRef(pos.x, pos.y) orelse return 0;
             const max_width_ = @min(max_width, self.width -| pos.x);
             const slice = pixel[0..max_width_];
-            if (slice.len == 0) return;
+            if (slice.len == 0) return 0;
             break :blk slice;
         };
 
         var iter = text.iterator();
+        var written: u16 = 0;
         for (pixels) |*pixel| {
             pixel.char = iter.nextCodepoint() orelse break;
+            written += 1;
         } else {
             pixels[pixels.len - 1].char = '…';
         }
+        return written;
     }
 
     pub fn drawTitle(self: *Tui, title: std.unicode.Utf8View) void {
-        self.drawTextLine(title, .{ .x = x_padding, .y = y_padding }, self.width - 2 * x_padding);
+        _ = self.drawTextLine(title, .{ .x = x_padding, .y = y_padding }, self.width - 2 * x_padding);
+    }
+
+    pub fn drawArtistAlbum(self: *Tui, artist: std.unicode.Utf8View, album: std.unicode.Utf8View) void {
+        var start: u16 = x_padding;
+        start += self.drawTextLine(
+            artist,
+            .{ .x = start, .y = y_padding + 1 },
+            self.width - 2 * x_padding,
+        );
+        start += self.drawTextLine(
+            .initComptime(" | "),
+            .{ .x = start, .y = y_padding + 1 },
+            self.width - 2 * x_padding,
+        );
+        _ = self.drawTextLine(
+            album,
+            .{ .x = start, .y = y_padding + 1 },
+            self.width - 2 * x_padding,
+        );
     }
 
     pub fn drawBottomBar(self: *Tui, played: Io.Duration, duration: Io.Duration) void {
