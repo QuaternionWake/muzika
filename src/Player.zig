@@ -5,6 +5,7 @@ const mem = std.mem;
 
 const sdl = @import("sdl");
 const flac = @import("flac");
+const known_dirs = @import("known-dirs");
 
 const Player = @This();
 
@@ -233,46 +234,52 @@ pub fn previousTrack(self: *Player) !void {
     try self.playCurrentTrack();
 }
 
-pub fn init(io: Io, ally: Allocator, path: []const u8) !Player {
-    const is_dir = blk: {
-        const file = try Io.Dir.cwd().openFile(io, path, .{ .allow_directory = true, .path_only = true });
-        defer file.close(io);
-        const stat = try file.stat(io);
-        break :blk stat.kind == .directory;
+pub fn init(io: Io, ally: Allocator, path: ?[]const u8, environ: *const std.process.Environ.Map) !Player {
+    var player: Player = blk: {
+        const file_buffer = try ally.alloc(u8, 1024);
+        errdefer ally.free(file_buffer);
+        const file_reader = try ally.create(Io.File.Reader);
+        errdefer ally.destroy(file_reader);
+
+        break :blk .{
+            .io = io,
+            .ally = ally,
+
+            .file = null,
+            .file_buffer = file_buffer,
+            .file_reader = file_reader,
+
+            .tracks = &.{},
+            .current_track = 0,
+
+            .sample_count = 0,
+            .last_measurement = .zero,
+            .played = .zero,
+            .duration = .zero,
+            .paused = true,
+
+            .decoder_arena = .init(ally),
+            .decoder = undefined,
+
+            .stream = null,
+        };
     };
+    errdefer player.deinit();
 
-    const file_buffer = try ally.alloc(u8, 1024);
-    errdefer ally.free(file_buffer);
-    const file_reader = try ally.create(Io.File.Reader);
-    errdefer ally.destroy(file_reader);
-
-    var player: Player = .{
-        .io = io,
-        .ally = ally,
-
-        .file = null,
-        .file_buffer = file_buffer,
-        .file_reader = file_reader,
-
-        .tracks = &.{},
-        .current_track = 0,
-
-        .sample_count = 0,
-        .last_measurement = .zero,
-        .played = .zero,
-        .duration = .zero,
-        .paused = true,
-
-        .decoder_arena = .init(ally),
-        .decoder = undefined,
-
-        .stream = null,
-    };
-
-    if (is_dir) {
-        try player.loadDir(path);
+    if (path) |p| {
+        const is_dir = blk: {
+            const file = try Io.Dir.cwd().openFile(io, p, .{ .allow_directory = true, .path_only = true });
+            defer file.close(io);
+            const stat = try file.stat(io);
+            break :blk stat.kind == .directory;
+        };
+        if (is_dir) {
+            try player.loadDir(p);
+        } else {
+            try player.loadFile(p);
+        }
     } else {
-        try player.loadFile(path);
+        try player.loadMusicDir(environ);
     }
 
     return player;
@@ -308,6 +315,7 @@ fn loadDir(self: *Player, path: []const u8) !void {
     var iter = dir.iterate();
 
     var track_list: std.ArrayList(Track) = .empty;
+    errdefer track_list.deinit(self.ally);
     while (true) {
         const entry = iter.next(self.io) catch |err| switch (err) {
             error.AccessDenied, error.PermissionDenied => continue,
@@ -335,6 +343,50 @@ fn loadDir(self: *Player, path: []const u8) !void {
 
     if (self.file) |f| f.close(self.io);
     self.file = try Io.Dir.cwd().openFile(self.io, mem.span(self.tracks[0].get(.path)), .{});
+    self.file_reader.* = self.file.?.reader(self.io, self.file_buffer);
+    self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
+}
+
+fn loadMusicDir(self: *Player, environ: *const std.process.Environ.Map) !void {
+    self.clearTracks();
+
+    const music_path = try known_dirs.getPath(self.io, self.ally, environ, .music) orelse return Io.Dir.OpenError.FileNotFound;
+    defer self.ally.free(music_path);
+    const music_dir = try Io.Dir.openDirAbsolute(self.io, music_path, .{ .iterate = true });
+    defer music_dir.close(self.io);
+
+    var walker = try music_dir.walk(self.ally);
+    defer walker.deinit();
+
+    var track_list: std.ArrayList(Track) = .empty;
+    errdefer track_list.deinit(self.ally);
+    while (true) {
+        const entry = walker.next(self.io) catch |err| switch (err) {
+            error.AccessDenied, error.PermissionDenied => continue,
+            else => return err,
+        } orelse break;
+        if (entry.kind != .file) continue;
+        if (!mem.endsWith(u8, entry.basename, ".flac")) continue;
+
+        const file = try entry.dir.openFile(self.io, entry.basename, .{});
+        var reader = file.reader(self.io, self.file_buffer);
+        const decoder: flac.Decoder = try .init(self.decoder_arena.allocator(), &reader.interface, .{});
+        defer _ = self.decoder_arena.reset(.retain_capacity);
+
+        try track_list.append(self.ally, try .init(
+            self.ally,
+            &.{ music_path, entry.path },
+            decoder,
+        ));
+    }
+
+    self.tracks = try track_list.toOwnedSlice(self.ally);
+    if (self.tracks.len == 0) return;
+
+    _ = self.decoder_arena.reset(.retain_capacity);
+
+    if (self.file) |f| f.close(self.io);
+    self.file = try Io.Dir.openFileAbsolute(self.io, mem.span(self.tracks[0].get(.path)), .{});
     self.file_reader.* = self.file.?.reader(self.io, self.file_buffer);
     self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
 }

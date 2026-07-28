@@ -11,6 +11,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const known_folders_dep = b.dependency("known_folders", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const sdl_mod = b.createModule(.{
         .root_source_file = b.path("src/sdl.zig"),
         .target = target,
@@ -28,6 +33,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "sdl", .module = sdl_mod },
                 .{ .name = "flac", .module = flac_dep.module("flac") },
+                .{ .name = "known-dirs", .module = known_folders_dep.module("known-folders") },
             },
         }),
     });

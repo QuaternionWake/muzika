@@ -8,6 +8,10 @@
             .url = "git+https://codeberg.org/audiophile/flac.git#7b73a7f548371ef5f471b26240ede1b35260946a",
             .hash = "flac-1.0.0-7jA7CZc0AgDu9ddW79TkGC1928nN5yfib5aviFqIWQfd",
         },
+        .known_folders = .{
+            .url = "git+https://github.com/ziglibs/known-folders.git?ref=master#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",
+            .hash = "known_folders-0.0.0-Fy-PJiDLAAB98m3uYUzatrTb2mO2fpvwx2zpSroEtfbO",
+        },
     },
     .paths = .{
         "build.zig",
