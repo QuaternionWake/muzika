@@ -109,12 +109,12 @@ stream: ?*sdl.AudioStream,
 pub fn play(self: *Player) !void {
     if (self.current_track >= self.tracks.len) return;
 
-    const min_queued = 102400;
+    // always at least keep a tenth of a second buffered
+    const min_queued = self.decoder.sample_rate / 10;
     if (!self.paused) {
         const stream = self.stream orelse return error.StreamUninitialized;
-        const queued = try sdl.getAudioStreamQueued(stream);
-        if (queued < min_queued) {
-            var buffer: [102400]f32 = undefined;
+        while (try sdl.getAudioStreamQueued(stream) < min_queued * @sizeOf(f32)) {
+            var buffer: [10240]f32 = undefined;
             const samples = try self.decoder.read(f32, &buffer);
             try sdl.putAudioStreamData(stream, f32, samples);
 
