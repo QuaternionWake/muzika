@@ -9,8 +9,6 @@ const known_dirs = @import("known-dirs");
 
 const Player = @This();
 
-const clock: Io.Clock = .awake;
-
 pub const Track = struct {
     strings: []u8,
     title: usize,
@@ -96,9 +94,7 @@ tracks: []Track,
 current_track: usize,
 
 sample_count: u36,
-last_measurement: Io.Timestamp,
-played: Io.Duration,
-duration: Io.Duration,
+samples_played: u64,
 paused: bool,
 
 decoder_arena: std.heap.ArenaAllocator,
@@ -120,11 +116,10 @@ pub fn play(self: *Player) !void {
 
             if (samples.len == 0) {
                 try self.nextTrack();
+                break;
             }
 
-            const t = clock.now(self.io);
-            self.played.nanoseconds += self.last_measurement.durationTo(t).nanoseconds;
-            self.last_measurement = t;
+            self.samples_played = self.decoder.frame_offset;
         }
     }
 }
@@ -132,8 +127,7 @@ pub fn play(self: *Player) !void {
 pub fn playCurrentTrack(self: *Player) !void {
     if (self.current_track >= self.tracks.len) {
         self.paused = true;
-        self.played = .zero;
-        self.duration = .zero;
+        self.samples_played = 0;
         self.sample_count = 0;
         return;
     }
@@ -148,7 +142,6 @@ pub fn playCurrentTrack(self: *Player) !void {
 
     // decoder ensures first metadata block is a stream_info
     self.sample_count = self.decoder.metadata[0].stream_info.sample_count;
-    self.duration = samplesToDuration(self.sample_count, self.decoder.sample_rate);
 
     if (self.stream) |s| sdl.destroyAudioStream(s);
     self.paused = true;
@@ -161,8 +154,7 @@ pub fn playCurrentTrack(self: *Player) !void {
     self.stream = try sdl.openAudioDeviceStream(.default_playback, &spec, null, null);
     try sdl.resumeAudioStreamDevice(self.stream.?);
     self.paused = false;
-    self.played = .zero;
-    self.last_measurement = clock.now(self.io);
+    self.samples_played = 0;
 }
 
 pub fn seekRelative(self: *Player, ms: i32) !void {
@@ -189,7 +181,7 @@ fn seekSample(self: *Player, target: u64) !void {
     const target_ = @min(target, self.sample_count -| 1);
 
     try self.decoder.seekTo(target_);
-    self.played = samplesToDuration(@intCast(self.decoder.frame_offset), self.decoder.sample_rate);
+    self.samples_played = self.decoder.frame_offset;
     try sdl.clearAudioStream(self.stream orelse return);
 }
 
@@ -198,14 +190,9 @@ pub fn togglePause(self: *Player) !void {
     if (self.paused) {
         try sdl.resumeAudioStreamDevice(stream);
         self.paused = false;
-
-        self.last_measurement = clock.now(self.io);
     } else {
         try sdl.pauseAudioStreamDevice(stream);
         self.paused = true;
-
-        const t = clock.now(self.io);
-        self.played.nanoseconds += self.last_measurement.durationTo(t).nanoseconds;
     }
 }
 
@@ -253,9 +240,7 @@ pub fn init(io: Io, ally: Allocator, path: ?[]const u8, environ: *const std.proc
             .current_track = 0,
 
             .sample_count = 0,
-            .last_measurement = .zero,
-            .played = .zero,
-            .duration = .zero,
+            .samples_played = 0,
             .paused = true,
 
             .decoder_arena = .init(ally),
@@ -398,8 +383,17 @@ pub fn clearTracks(self: *Player) void {
     self.current_track = 0;
 }
 
-fn samplesToDuration(sample_count: u36, sample_rate: u32) Io.Duration {
+pub fn played(self: Player) Io.Duration {
+    return samplesToDuration(self.samples_played, self.decoder.sample_rate);
+}
+
+pub fn duration(self: Player) Io.Duration {
+    return samplesToDuration(self.sample_count, self.decoder.sample_rate);
+}
+
+fn samplesToDuration(sample_count: u64, sample_rate: u32) Io.Duration {
     return .{
-        .nanoseconds = std.math.mulWide(u36, std.time.ns_per_s, sample_count) / sample_rate,
+        // sample count should never be bigger than a u36, so a u80 can guarantee no overflow
+        .nanoseconds = std.time.ns_per_s * @as(u80, sample_count) / sample_rate,
     };
 }

@@ -65,7 +65,7 @@ pub fn main(init: std.process.Init) !u8 {
         const album_view = Utf8View.init(player.trackString(.album)) catch Utf8View.initComptime("???");
         terminal.tui.drawTitle(title_view);
         terminal.tui.drawArtistAlbum(artist_view, album_view);
-        terminal.tui.drawBottomBar(player.played, player.duration);
+        terminal.tui.drawBottomBar(player.played(), player.duration());
 
         try terminal.draw();
 
