@@ -10,6 +10,7 @@ const flac = @import("flac");
 const raw_mode = @import("raw_mode.zig");
 const input = @import("input.zig");
 const Terminal = @import("Terminal.zig");
+const tui = @import("tui.zig");
 const Player = @import("Player.zig");
 
 pub fn main(init: std.process.Init) !u8 {
@@ -58,14 +59,10 @@ pub fn main(init: std.process.Init) !u8 {
         };
         std.Io.sleep(init.io, .fromMilliseconds(10), .awake) catch unreachable;
 
-        terminal.tui.drawCoverArt();
-        terminal.tui.drawTrackList(player.tracks, player.current_track);
-        const title_view = Utf8View.init(player.trackString(.title)) catch Utf8View.initComptime("???");
-        const artist_view = Utf8View.init(player.trackString(.artist)) catch Utf8View.initComptime("???");
-        const album_view = Utf8View.init(player.trackString(.album)) catch Utf8View.initComptime("???");
-        terminal.tui.drawTitle(title_view);
-        terminal.tui.drawArtistAlbum(artist_view, album_view);
-        terminal.tui.drawBottomBar(player.played(), player.duration());
+        tui.drawCoverArt(&terminal.framebuffer);
+        tui.drawTrackList(&terminal.framebuffer, player.tracks, player.current_track);
+        tui.drawTrackInfo(&terminal.framebuffer, player.tracks[player.current_track]);
+        tui.drawBottomBar(&terminal.framebuffer, player.played(), player.duration());
 
         try terminal.draw();
 

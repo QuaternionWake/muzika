@@ -17,12 +17,12 @@ pub const Track = struct {
 
     const String = enum { path, title, artist, album };
 
-    pub fn get(self: Track, string: String) [*:0]const u8 {
+    pub fn get(self: Track, string: String) [:0]const u8 {
         return switch (string) {
-            .path => @ptrCast(self.strings[0..]),
-            .title => @ptrCast(self.strings[self.title..]),
-            .artist => @ptrCast(self.strings[self.artist..]),
-            .album => @ptrCast(self.strings[self.album..]),
+            .path => @ptrCast(self.strings[0 .. self.title - 1 :0]),
+            .title => @ptrCast(self.strings[self.title .. self.artist - 1 :0]),
+            .artist => @ptrCast(self.strings[self.artist .. self.album - 1 :0]),
+            .album => @ptrCast(self.strings[self.album .. self.strings.len - 1 :0]),
         };
     }
 
@@ -136,11 +136,11 @@ pub fn playCurrentTrack(self: *Player) !void {
     _ = self.decoder_arena.reset(.retain_capacity);
 
     if (self.file) |f| f.close(self.io);
-    self.file = try Io.Dir.cwd().openFile(self.io, mem.span(track.get(.path)), .{});
+    self.file = try Io.Dir.cwd().openFile(self.io, track.get(.path), .{});
     self.file_reader.* = self.file.?.reader(self.io, self.file_buffer);
     self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
 
-    // decoder ensures first metadata block is a stream_info
+    // SAFETY: decoder ensures first metadata block is a stream_info
     self.sample_count = self.decoder.metadata[0].stream_info.sample_count;
 
     if (self.stream) |s| sdl.destroyAudioStream(s);
@@ -193,14 +193,6 @@ pub fn togglePause(self: *Player) !void {
     } else {
         try sdl.pauseAudioStreamDevice(stream);
         self.paused = true;
-    }
-}
-
-pub fn trackString(self: Player, string: Track.String) []const u8 {
-    if (self.current_track < self.tracks.len) {
-        return mem.span(self.tracks[self.current_track].get(string));
-    } else {
-        return "n/a";
     }
 }
 
@@ -327,7 +319,7 @@ fn loadDir(self: *Player, path: []const u8) !void {
     _ = self.decoder_arena.reset(.retain_capacity);
 
     if (self.file) |f| f.close(self.io);
-    self.file = try Io.Dir.cwd().openFile(self.io, mem.span(self.tracks[0].get(.path)), .{});
+    self.file = try Io.Dir.cwd().openFile(self.io, self.tracks[0].get(.path), .{});
     self.file_reader.* = self.file.?.reader(self.io, self.file_buffer);
     self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
 }
@@ -371,7 +363,7 @@ fn loadMusicDir(self: *Player, environ: *const std.process.Environ.Map) !void {
     _ = self.decoder_arena.reset(.retain_capacity);
 
     if (self.file) |f| f.close(self.io);
-    self.file = try Io.Dir.openFileAbsolute(self.io, mem.span(self.tracks[0].get(.path)), .{});
+    self.file = try Io.Dir.openFileAbsolute(self.io, self.tracks[0].get(.path), .{});
     self.file_reader.* = self.file.?.reader(self.io, self.file_buffer);
     self.decoder = try .init(self.decoder_arena.allocator(), &self.file_reader.interface, .{ .seek_impl = .file });
 }

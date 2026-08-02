@@ -6,12 +6,10 @@ const time = std.time;
 
 const input = @import("input.zig");
 const Track = @import("Player.zig").Track;
+const Framebuffer = @import("Framebuffer.zig");
+const tui = @import("tui.zig");
 
 const Terminal = @This();
-
-const tui_height = 14;
-const y_padding = 1;
-const x_padding = 2;
 
 io: Io,
 ally: Allocator,
@@ -27,7 +25,7 @@ stdin: Io.File.Reader,
 old_termios: ?std.posix.termios,
 first_draw: bool,
 
-tui: Tui,
+framebuffer: Framebuffer,
 
 pub fn init(io: Io, ally: Allocator) !Terminal {
     const stdout_file = Io.File.stdout();
@@ -41,10 +39,10 @@ pub fn init(io: Io, ally: Allocator) !Terminal {
     const stdin = stdin_file.reader(io, stdin_buf);
 
     var size = getSize(stdout_file);
-    size.y = tui_height;
+    size.height = tui.tui_height;
 
-    const tui: Tui = try .init(ally, size);
-    errdefer tui.deinit(ally);
+    const framebuffer: Framebuffer = try .init(ally, size.width, size.height);
+    errdefer framebuffer.deinit(ally);
 
     var self: Terminal = .{
         .io = io,
@@ -61,7 +59,7 @@ pub fn init(io: Io, ally: Allocator) !Terminal {
         .old_termios = null,
         .first_draw = true,
 
-        .tui = tui,
+        .framebuffer = framebuffer,
     };
     self.enterRawMode();
     return self;
@@ -71,7 +69,7 @@ pub fn deinit(self: *Terminal) void {
     self.exitRawMode();
     self.ally.free(self.stdout_buf);
     self.ally.free(self.stdin_buf);
-    self.tui.deinit(self.ally);
+    self.framebuffer.deinit(self.ally);
 }
 
 pub fn getInput(self: *Terminal) ?input.KeyboardKey {
@@ -93,244 +91,35 @@ pub fn getInput(self: *Terminal) ?input.KeyboardKey {
 
 pub fn draw(self: *Terminal) !void {
     const size = getSize(self.stdout_file);
-    if (self.tui.width != size.x) {
+    if (self.framebuffer.width != size.width) {
         // TODO: make this not suck
-        self.tui.deinit(self.ally);
-        self.tui = try .init(self.ally, .{ .x = size.x, .y = self.tui.height });
+        self.framebuffer.deinit(self.ally);
+        self.framebuffer = try .init(self.ally, size.width, tui.tui_height);
     }
     if (!self.first_draw) {
         // Go to top right corner
-        try self.stdout.interface.print("\x1b[{d}A\r", .{self.tui.height -| 1});
+        try self.stdout.interface.print("\x1b[{d}A\r", .{self.framebuffer.height -| 1});
     }
 
-    for (self.tui.pixels) |pixel| {
+    for (self.framebuffer.pixels) |pixel| {
         try self.stdout.interface.printUnicodeCodepoint(pixel.char);
     }
     try self.stdout.interface.flush();
-    @memset(self.tui.pixels, .{});
+    @memset(self.framebuffer.pixels, .{});
 
     self.first_draw = false;
 }
 
-const Tui = struct {
-    width: u16,
-    height: u16,
-    pixels: []TuiPixel,
-
-    fn init(ally: Allocator, size: Vec2) !Tui {
-        const buf = try ally.alloc(TuiPixel, size.x * size.y);
-        @memset(buf, .{});
-        return .{
-            .width = size.x,
-            .height = size.y,
-            .pixels = buf,
-        };
-    }
-
-    fn deinit(self: *Tui, ally: Allocator) void {
-        ally.free(self.pixels);
-        self.pixels = &.{};
-    }
-
-    fn getPixelRef(self: *Tui, x: u16, y: u16) ?[*]TuiPixel {
-        if (x >= self.width or y >= self.height) return null;
-        const offset = @as(usize, x) + @as(usize, y) * @as(usize, self.width);
-        return self.pixels[offset..].ptr;
-    }
-
-    pub fn drawTrackList(self: *Tui, tracks: []Track, current_track: usize) void {
-        const x = x_padding + @as(u16, if (self.width < 50) 2 else cover_art_width + 5);
-
-        const start = blk: {
-            if (tracks.len <= cover_art_height) break :blk 0;
-            break :blk @min(current_track -| cover_art_height / 2, tracks.len - cover_art_height);
-        };
-        const end =
-            if (tracks.len <= cover_art_height) tracks.len else start + cover_art_height;
-
-        for (tracks[start..end], 0..) |track, y| {
-            const title = std.mem.span(track.get(.title));
-            const view = std.unicode.Utf8View.init(title) catch std.unicode.Utf8View.initComptime("???");
-
-            _ = self.drawTextLine(view, .{ .x = x, .y = @intCast(y + y_padding) }, self.width - x - x_padding);
-            if (y + start == current_track) {
-                const pixel = self.getPixelRef(x - 2, @intCast(y + y_padding)) orelse continue;
-                pixel[0].char = '>';
-            }
-        }
-    }
-
-    const cover_art_width = 16;
-    const cover_art_height = 7;
-    pub fn drawCoverArt(self: *Tui) void {
-        if (self.width < 50) return;
-
-        for (0..cover_art_height) |y| {
-            const pixels = blk: {
-                const pixel = self.getPixelRef(x_padding, @intCast(y + y_padding)) orelse return;
-                break :blk pixel[0..cover_art_width];
-            };
-            for (pixels) |*p| {
-                p.char = '.';
-            }
-        }
-    }
-
-    pub fn drawTextLine(self: *Tui, text: std.unicode.Utf8View, pos: Vec2, max_width: u16) u16 {
-        const pixels = blk: {
-            const pixel = self.getPixelRef(pos.x, pos.y) orelse return 0;
-            const max_width_ = @min(max_width, self.width -| pos.x);
-            const slice = pixel[0..max_width_];
-            if (slice.len == 0) return 0;
-            break :blk slice;
-        };
-
-        var iter = text.iterator();
-        var written: u16 = 0;
-        for (pixels) |*pixel| {
-            pixel.char = iter.nextCodepoint() orelse break;
-            written += 1;
-        } else {
-            pixels[pixels.len - 1].char = '…';
-        }
-        return written;
-    }
-
-    pub fn drawTitle(self: *Tui, title: std.unicode.Utf8View) void {
-        _ = self.drawTextLine(title, .{ .x = x_padding, .y = y_padding + 8 }, self.width - 2 * x_padding);
-    }
-
-    pub fn drawArtistAlbum(self: *Tui, artist: std.unicode.Utf8View, album: std.unicode.Utf8View) void {
-        var start: u16 = x_padding;
-        start += self.drawTextLine(
-            artist,
-            .{ .x = start, .y = y_padding + 9 },
-            self.width - 2 * x_padding,
-        );
-        start += self.drawTextLine(
-            .initComptime(" | "),
-            .{ .x = start, .y = y_padding + 9 },
-            self.width - 2 * x_padding,
-        );
-        _ = self.drawTextLine(
-            album,
-            .{ .x = start, .y = y_padding + 9 },
-            self.width - 2 * x_padding,
-        );
-    }
-
-    pub fn drawBottomBar(self: *Tui, played: Io.Duration, duration: Io.Duration) void {
-        var pixels = blk: {
-            const pixel = self.getPixelRef(x_padding, self.height -| (y_padding + 1)) orelse return;
-            const slice = pixel[0..self.width -| 2 * x_padding];
-            if (slice.len == 0) return;
-            break :blk slice;
-        };
-
-        const played_seconds = played.toSeconds();
-        const duration_seconds = duration.toSeconds();
-
-        const times_played = .{
-            .hours = @divTrunc(played_seconds, std.time.s_per_hour),
-            .mins = @as(u64, @intCast(@divFloor(@mod(played_seconds, std.time.s_per_hour), std.time.s_per_min))),
-            .secs = @as(u64, @intCast(@mod(played_seconds, std.time.s_per_min))),
-        };
-
-        const times_duration = .{
-            .hours = @divTrunc(duration_seconds, std.time.s_per_hour),
-            .mins = @as(u64, @intCast(@divFloor(@mod(duration_seconds, std.time.s_per_hour), std.time.s_per_min))),
-            .secs = @as(u64, @intCast(@mod(duration_seconds, std.time.s_per_min))),
-        };
-
-        // max len of i64 is 20 chars (sign + 19 digits)
-        // that plus 2 two digit numbers and 2 colons plus trailing/leading space => 27
-        var buf_played: [32]u8 = undefined;
-        const str_played = blk: {
-            var writer: Io.Writer = .fixed(&buf_played);
-            if (times_played.hours != 0) {
-                writer.print("{d}:{d:02}:{d:02}", times_played) catch unreachable;
-            } else {
-                writer.print("{d}:{d:02}", .{ times_played.mins, times_played.secs }) catch unreachable;
-            }
-            break :blk buf_played[0..writer.end];
-        };
-
-        var buf_duration: [32]u8 = undefined;
-        const str_duration = blk: {
-            var writer: Io.Writer = .fixed(&buf_duration);
-            if (times_duration.hours != 0) {
-                writer.print("{d}:{d:02}:{d:02}", times_duration) catch unreachable;
-            } else {
-                writer.print("{d}:{d:02}", .{ times_duration.mins, times_duration.secs }) catch unreachable;
-            }
-            break :blk buf_duration[0..writer.end];
-        };
-
-        // has space for at least 5 notches on the progress bar + ends + spaces
-        if (pixels.len > str_played.len + str_duration.len + 5 + 2 + 2) {
-            // [played] [progress bar] [duration]
-            // 0:33 [####          ] 4:52
-            const progress_width = pixels.len - str_played.len - str_duration.len - 2;
-            const inner_width = progress_width - 2;
-            const ratio_played = @min(1, @as(f32, @floatFromInt(played.nanoseconds)) / @as(f32, @floatFromInt(duration.nanoseconds)));
-            const num_filled: usize = @round(ratio_played * @as(f32, @floatFromInt(inner_width)));
-
-            // played
-            writeTuiPixelString(pixels, str_played);
-            pixels = pixels[str_played.len + 1 ..];
-
-            // progress bar
-            pixels[0].char = '[';
-            @memset(pixels[1..][0..num_filled], .{ .char = '#' });
-            pixels[progress_width - 1].char = ']';
-            pixels = pixels[progress_width + 1 ..];
-
-            // duration
-            writeTuiPixelString(pixels, str_duration);
-            pixels = pixels[str_duration.len..];
-        } else if (pixels.len > str_played.len + str_duration.len + 3) {
-            // [played] / [duration]
-            // 0:33 / 4:52
-
-            // played
-            writeTuiPixelString(pixels, str_played);
-            pixels = pixels[str_played.len..];
-
-            pixels[0].char = '/';
-            pixels = pixels[1..];
-
-            // duration
-            writeTuiPixelString(pixels, str_duration);
-            pixels = pixels[str_duration.len..];
-        } else if (pixels.len > str_played.len) {
-            // [played]
-            // 0:33
-            writeTuiPixelString(pixels, str_played);
-            pixels = pixels[str_played.len..];
-        }
-    }
-};
-
-const TuiPixel = struct {
-    char: u21 = ' ',
-};
-
-fn writeTuiPixelString(pixels: []TuiPixel, string: []const u8) void {
-    for (pixels[0..string.len], string[0..string.len]) |*pixel, char| {
-        pixel.char = char;
-    }
-}
-
-fn getSize(stdout: Io.File) Vec2 {
+fn getSize(stdout: Io.File) Size {
     var size: std.posix.winsize = undefined;
     // TODO: figure out what this returns
     _ = std.os.linux.ioctl(stdout.handle, std.os.linux.T.IOCGWINSZ, @intFromPtr(&size));
-    return .{ .x = size.col, .y = size.row };
+    return .{ .width = size.col, .height = size.row };
 }
 
-const Vec2 = struct {
-    x: u16,
-    y: u16,
+const Size = struct {
+    width: u16,
+    height: u16,
 };
 
 fn enterRawMode(self: *Terminal) void {
