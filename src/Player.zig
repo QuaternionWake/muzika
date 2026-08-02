@@ -14,6 +14,8 @@ pub const Track = struct {
     title: usize,
     artist: usize,
     album: usize,
+    number: u16,
+    duration: Io.Duration,
 
     const String = enum { path, title, artist, album };
 
@@ -34,6 +36,7 @@ pub const Track = struct {
         };
         var artist: []const u8 = "unknown artist";
         var album: []const u8 = "unknown album";
+        var track_number: u16 = 0;
         for (decoder.metadata) |m| {
             switch (m) {
                 .vorbis_comment => |vc| {
@@ -45,12 +48,17 @@ pub const Track = struct {
                             artist = entry.value;
                         } else if (mem.eql(u8, entry.key, "ALBUM")) {
                             album = entry.value;
+                        } else if (mem.eql(u8, entry.key, "TRACKNUMBER")) {
+                            track_number = std.fmt.parseInt(u16, entry.value, 10) catch 0;
                         }
                     }
                 },
                 else => {},
             }
         }
+        // SAFETY: decoder ensures first metadata block is a stream_info
+        const sample_count = decoder.metadata[0].stream_info.sample_count;
+        const track_duration: Io.Duration = samplesToDuration(sample_count, decoder.sample_rate);
 
         // path.len - 1 separators, plus a null terminator for each field
         var len = path.len -| 1 + 4;
@@ -75,6 +83,8 @@ pub const Track = struct {
             .title = title_start,
             .artist = artist_start,
             .album = album_start,
+            .number = track_number,
+            .duration = track_duration,
         };
     }
 
@@ -383,7 +393,7 @@ pub fn duration(self: Player) Io.Duration {
     return samplesToDuration(self.sample_count, self.decoder.sample_rate);
 }
 
-fn samplesToDuration(sample_count: u64, sample_rate: u32) Io.Duration {
+pub fn samplesToDuration(sample_count: u64, sample_rate: u32) Io.Duration {
     return .{
         // sample count should never be bigger than a u36, so a u80 can guarantee no overflow
         .nanoseconds = std.time.ns_per_s * @as(u80, sample_count) / sample_rate,

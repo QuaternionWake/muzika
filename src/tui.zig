@@ -32,9 +32,20 @@ pub fn drawTrackList(fb: *Fb, tracks: []Track, current_track: usize) void {
         if (tracks.len <= cover_art_height) tracks.len else start + cover_art_height;
 
     for (tracks[start..end], 0..) |track, y| {
+        var track_number_buffer: [8]u8 = undefined;
+        const number = std.fmt.bufPrint(&track_number_buffer, "{d:2}  ", .{track.number}) catch "???";
         const view = utf8View(track.get(.title));
 
-        drawTextUtf8View(fb, x, @intCast(y), null, view);
+        var duration_buffer: [32]u8 = undefined;
+        const duration_str = std.fmt.bufPrint(&duration_buffer, "{f}", .{fmtDuration(track.duration)}) catch unreachable;
+        const x_end: u16 = @intCast(fb.width -| 2 * x_padding -| duration_str.len -| 2);
+
+        drawTextChunks(fb, x, @intCast(y), x_end, &.{
+            .{ .ascii = number },
+            .{ .utf8 = view },
+        });
+
+        drawTextAscii(fb, x_end + 2, @intCast(y), null, duration_str);
     }
 
     const arrow_pixel = paddedPixel(fb, x - 2, @intCast(current_track - start)) orelse return;
@@ -54,44 +65,11 @@ pub fn drawBottomBar(fb: *Fb, played: std.Io.Duration, duration: std.Io.Duration
     const y = fb.height - 2 * y_padding - 1;
     var line = paddedLine(fb, y) orelse return;
 
-    const played_seconds = played.toSeconds();
-    const duration_seconds = duration.toSeconds();
-
-    const times_played = .{
-        .hours = @divTrunc(played_seconds, std.time.s_per_hour),
-        .mins = @as(u64, @intCast(@divFloor(@mod(played_seconds, std.time.s_per_hour), std.time.s_per_min))),
-        .secs = @as(u64, @intCast(@mod(played_seconds, std.time.s_per_min))),
-    };
-
-    const times_duration = .{
-        .hours = @divTrunc(duration_seconds, std.time.s_per_hour),
-        .mins = @as(u64, @intCast(@divFloor(@mod(duration_seconds, std.time.s_per_hour), std.time.s_per_min))),
-        .secs = @as(u64, @intCast(@mod(duration_seconds, std.time.s_per_min))),
-    };
-
-    // max len of i64 is 20 chars (sign + 19 digits)
-    // that plus 2 two digit numbers and 2 colons plus trailing/leading space => 27
     var buf_played: [32]u8 = undefined;
-    const str_played = blk: {
-        var writer: std.Io.Writer = .fixed(&buf_played);
-        if (times_played.hours != 0) {
-            writer.print("{d}:{d:02}:{d:02}", times_played) catch unreachable;
-        } else {
-            writer.print("{d}:{d:02}", .{ times_played.mins, times_played.secs }) catch unreachable;
-        }
-        break :blk buf_played[0..writer.end];
-    };
+    const str_played = std.fmt.bufPrint(&buf_played, "{f}", .{fmtDuration(played)}) catch unreachable;
 
     var buf_duration: [32]u8 = undefined;
-    const str_duration = blk: {
-        var writer: std.Io.Writer = .fixed(&buf_duration);
-        if (times_duration.hours != 0) {
-            writer.print("{d}:{d:02}:{d:02}", times_duration) catch unreachable;
-        } else {
-            writer.print("{d}:{d:02}", .{ times_duration.mins, times_duration.secs }) catch unreachable;
-        }
-        break :blk buf_duration[0..writer.end];
-    };
+    const str_duration = std.fmt.bufPrint(&buf_duration, "{f}", .{fmtDuration(duration)}) catch unreachable;
 
     // has space for at least 5 notches on the progress bar + ends + spaces
     if (line.len > str_played.len + str_duration.len + 5 + 2 + 2) {
@@ -181,4 +159,42 @@ fn paddedLineSlice(fb: *Fb, x: u16, y: u16, x_end: ?u16) ?[]Fb.Pixel {
 
 fn utf8View(str: []const u8) std.unicode.Utf8View {
     return std.unicode.Utf8View.init(str) catch std.unicode.Utf8View.initComptime("???");
+}
+
+/// Will print at most 24 characters to the writer.
+/// At most 23 if the duration is positive.
+fn fmtDuration(duration: std.Io.Duration) std.fmt.Alt(std.Io.Duration, printDuration) {
+    return .{ .data = duration };
+}
+
+/// Will print at most 24 characters to the writer.
+/// At most 23 if the duration is positive.
+fn printDuration(duration: std.Io.Duration, writer: *std.Io.Writer) error{WriteFailed}!void {
+    const seconds = @divTrunc(duration.nanoseconds, std.time.ns_per_s);
+
+    const hms = .{
+        .hours = @divTrunc(seconds, std.time.s_per_hour),
+        .mins = @as(u8, @intCast(@divFloor(@mod(seconds, std.time.s_per_hour), std.time.s_per_min))),
+        .secs = @as(u8, @intCast(@mod(seconds, std.time.s_per_min))),
+    };
+
+    if (hms.hours != 0) {
+        try writer.print("{d}:{d:02}:{d:02}", hms);
+    } else {
+        try writer.print("{d}:{d:02}", .{ hms.mins, hms.secs });
+    }
+}
+
+test "printDuration" {
+    var buffer: [24]u8 = undefined;
+    const duration_min: std.Io.Duration = .{ .nanoseconds = std.math.minInt(i96) };
+    const duration_max: std.Io.Duration = .{ .nanoseconds = std.math.maxInt(i96) };
+
+    var writer: std.Io.Writer = .fixed(&buffer);
+    try printDuration(duration_min, &writer);
+    try std.testing.expectEqual(24, writer.end);
+
+    writer = .fixed(&buffer);
+    try printDuration(duration_max, &writer);
+    try std.testing.expectEqual(23, writer.end);
 }

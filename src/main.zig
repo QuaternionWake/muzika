@@ -13,6 +13,10 @@ const Terminal = @import("Terminal.zig");
 const tui = @import("tui.zig");
 const Player = @import("Player.zig");
 
+comptime {
+    std.testing.refAllDecls(tui);
+}
+
 pub fn main(init: std.process.Init) !u8 {
     var stdout_buf: [1024]u8 = undefined;
     const stdout_file = std.Io.File.stdout();
