@@ -191,7 +191,18 @@ fn seekSample(self: *Player, target: u64) !void {
     const target_ = @min(target, self.sample_count -| 1);
 
     try self.decoder.seekTo(target_);
-    self.samples_played = self.decoder.frame_offset;
+    if (target_ == self.sample_count -| 1) {
+        // This fixes a corner case for when the last track in a playlist has a
+        // sample count divisible by its sample rate.
+        // If this were not here when that track ended it would display as being
+        // one second away from being done (e.g. 12:29 / 12:30).
+        //
+        // TODO: this may or may not create the opposite issue for tracks with a
+        // sample count one short of being divisible by its sample rate.
+        self.samples_played = target_ + 1;
+    } else {
+        self.samples_played = self.decoder.frame_offset;
+    }
     try sdl.clearAudioStream(self.stream orelse return);
 }
 
